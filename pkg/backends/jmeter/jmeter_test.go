@@ -168,95 +168,78 @@ func TestSync(t *testing.T) {
 }
 
 func TestTransformLoadTestSpec(t *testing.T) {
-	var distributedPods int32 = 3
-
-	type args struct {
-		config          Config
-		overwrite       bool
-		distributedPods int32
-		tags            loadTestV1.LoadTestTags
-		testFileStr     string
-		testDataStr     string
-		envVarsStr      string
-	}
-	tests := []struct {
-		name    string
-		args    args
-		want    loadTestV1.LoadTestSpec
-		wantErr bool
-	}{
-		{
-			name: "Spec is valid",
-			args: args{
-				overwrite:       true,
-				distributedPods: 3,
-				tags:            loadTestV1.LoadTestTags{"team": "kangal"},
-				testFileStr:     "something in the file",
-				testDataStr:     "some test data",
-			},
-			want: loadTestV1.LoadTestSpec{
-				Overwrite:       true,
-				MasterConfig:    loadTestV1.ImageDetails{Image: defaultMasterImageName, Tag: defaultMasterImageTag},
-				WorkerConfig:    loadTestV1.ImageDetails{Image: defaultWorkerImageName, Tag: defaultWorkerImageTag},
-				DistributedPods: &distributedPods,
-				Tags:            loadTestV1.LoadTestTags{"team": "kangal"},
-				TestFile:        "something in the file",
-				TestData:        "some test data",
-			},
-			wantErr: false,
+	jmeter := &JMeter{
+		masterConfig: loadTestV1.ImageDetails{
+			Image: "master-image",
+			Tag:   "master-tag",
 		},
-		{
-			name:    "Spec invalid - invalid distributed pods",
-			args:    args{},
-			want:    loadTestV1.LoadTestSpec{},
-			wantErr: true,
-		},
-		{
-			name: "Spec invalid - require test file",
-			args: args{
-				overwrite:       true,
-				distributedPods: 3,
-			},
-			want: loadTestV1.LoadTestSpec{
-				Overwrite:       true,
-				DistributedPods: &distributedPods,
-			},
-			wantErr: true,
+		workerConfig: loadTestV1.ImageDetails{
+			Image: "worker-image",
+			Tag:   "worker-tag",
 		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			lt := &loadTestV1.LoadTestSpec{
-				Overwrite:       tt.args.overwrite,
-				DistributedPods: &tt.args.distributedPods,
-				Tags:            tt.args.tags,
-				TestFile:        tt.args.testFileStr,
-				TestData:        tt.args.testDataStr,
-				EnvVars:         tt.args.envVarsStr,
-			}
 
-			b := &JMeter{
-				config: &Config{},
-			}
-			b.SetDefaults()
+	spec := &loadTestV1.LoadTestSpec{}
 
-			err := b.TransformLoadTestSpec(lt)
+	t.Run("Empty spec", func(t *testing.T) {
+		err := jmeter.TransformLoadTestSpec(spec)
+		assert.EqualError(t, err, ErrRequireMinOneDistributedPod.Error())
+	})
 
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
+	t.Run("Negative distributedPods", func(t *testing.T) {
+		distributedPods := int32(-10)
+		spec.DistributedPods = &distributedPods
+		err := jmeter.TransformLoadTestSpec(spec)
+		assert.EqualError(t, err, ErrRequireMinOneDistributedPod.Error())
+	})
 
-			assert.Equal(t, tt.want.Overwrite, lt.Overwrite)
-			assert.Equal(t, tt.want.MasterConfig, lt.MasterConfig)
-			assert.Equal(t, tt.want.WorkerConfig, lt.WorkerConfig)
-			if nil != tt.want.DistributedPods {
-				assert.Equal(t, *tt.want.DistributedPods, *lt.DistributedPods)
-			}
-			assert.Equal(t, tt.want.Tags, lt.Tags)
-			assert.Equal(t, tt.want.TestFile, lt.TestFile)
-			assert.Equal(t, tt.want.TestData, lt.TestData)
-		})
-	}
+	t.Run("Empty testFile", func(t *testing.T) {
+		distributedPods := int32(2)
+		spec.DistributedPods = &distributedPods
+		err := jmeter.TransformLoadTestSpec(spec)
+		assert.EqualError(t, err, ErrRequireTestFile.Error())
+	})
+
+	t.Run("All valid", func(t *testing.T) {
+		distributedPods := int32(2)
+		spec.DistributedPods = &distributedPods
+		spec.TestFile = "my-test"
+		err := jmeter.TransformLoadTestSpec(spec)
+		assert.NoError(t, err)
+		assert.Equal(t, spec.MasterConfig.Image, "master-image")
+		assert.Equal(t, spec.MasterConfig.Tag, "master-tag")
+		assert.Equal(t, spec.WorkerConfig.Image, "worker-image")
+		assert.Equal(t, spec.WorkerConfig.Tag, "worker-tag")
+	})
+}
+
+func TestSetDefaults(t *testing.T) {
+	t.Run("With env default", func(t *testing.T) {
+		jmeter := &JMeter{
+			config: &Config{
+				MasterImageName: "my-master-image-name",
+				MasterImageTag:  "my-master-image-tag",
+				WorkerImageName: "my-worker-image-name",
+				WorkerImageTag:  "my-worker-image-tag",
+			},
+		}
+		jmeter.SetDefaults()
+
+		assert.Equal(t, jmeter.workerConfig.Image, "my-worker-image-name")
+		assert.Equal(t, jmeter.workerConfig.Tag, "my-worker-image-tag")
+		assert.Equal(t, jmeter.masterConfig.Image, "my-master-image-name")
+		assert.Equal(t, jmeter.masterConfig.Tag, "my-master-image-tag")
+	})
+
+	t.Run("No default", func(t *testing.T) {
+		jmeter := &JMeter{
+			config: &Config{},
+		}
+		jmeter.SetDefaults()
+
+		assert.Equal(t, jmeter.masterConfig.Image, defaultMasterImageName)
+		assert.Equal(t, jmeter.masterConfig.Tag, defaultMasterImageTag)
+		assert.Equal(t, jmeter.workerConfig.Image, defaultWorkerImageName)
+		assert.Equal(t, jmeter.workerConfig.Tag, defaultWorkerImageTag)
+	})
 }
