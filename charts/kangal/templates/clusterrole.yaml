@@ -3,7 +3,7 @@ kind: ClusterRole
 metadata:
   labels:
     kubernetes.io/bootstrapping: rbac-defaults
-  name: {{ $.Release.Namespace }}-kangal-controller
+  name: system-controller-kangal-controller-{{ $.Release.Namespace }}
 rules:
 
   - apiGroups:

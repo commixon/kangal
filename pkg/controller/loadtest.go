@@ -65,7 +65,8 @@ type Controller struct {
 
 	statsClient observability.StatsReporter
 
-	logger *zap.Logger
+	registry backends.Registry
+	logger   *zap.Logger
 }
 
 // NewController returns a new sample controller
@@ -76,6 +77,7 @@ func NewController(
 	kubeInformerFactory informers.SharedInformerFactory,
 	kangalInformerFactory externalversions.SharedInformerFactory,
 	statsClient observability.StatsReporter,
+	registry backends.Registry,
 	logger *zap.Logger) *Controller {
 
 	namespaceInformer := kubeInformerFactory.Core().V1().Namespaces()
@@ -114,7 +116,9 @@ func NewController(
 		workQueue:   workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "LoadTest"),
 		recorder:    recorder,
 		statsClient: statsClient,
-		logger:      logger,
+
+		registry: registry,
+		logger:   logger,
 	}
 
 	logger.Debug("Setting up event handlers")
@@ -255,7 +259,7 @@ func (c *Controller) processNextWorkItem() bool {
 		// Finally, if no error occurs we Forget this item so it does not
 		// get queued again until another change happens.
 		c.workQueue.Forget(obj)
-		c.logger.Info("Successfully synced", zap.String("loadTest", key))
+		c.logger.Debug("Successfully synced", zap.String("loadTest", key))
 		return nil
 	}(obj)
 
@@ -306,9 +310,9 @@ func (c *Controller) syncHandler(key string) error {
 		reportURL = fmt.Sprintf("%s/load-test/%s/report", c.cfg.KangalProxyURL, loadTest.GetName())
 	}
 
-	backend, err := backends.NewLoadTest(loadTest, c.kubeClientSet, c.kangalClientSet, c.logger, c.namespacesLister, reportURL, c.cfg.PodAnnotations, c.cfg.NamespaceAnnotations, c.cfg.Backends)
+	backend, err := c.registry.GetBackend(loadTest.Spec.Type)
 	if err != nil {
-		return fmt.Errorf("failed to create new backend: %w", err)
+		return fmt.Errorf("failed to resolve backend: %w", err)
 	}
 
 	// check or create namespace
@@ -317,14 +321,14 @@ func (c *Controller) syncHandler(key string) error {
 		return err
 	}
 
-	// check or create loadtest resources
-	err = backend.CheckOrCreateResources(ctx)
+	// sync backend resources
+	err = backend.Sync(ctx, *loadTest, reportURL)
 	if err != nil {
 		return err
 	}
 
-	// check current LoadTest progress
-	err = backend.CheckOrUpdateStatus(ctx)
+	// sync backend status
+	err = backend.SyncStatus(ctx, *loadTest, &loadTest.Status)
 	if err != nil {
 		return err
 	}
@@ -390,7 +394,7 @@ func (c *Controller) handleObject(obj interface{}) {
 		c.logger.Debug("Processing object", zap.String("loadtest", object.GetName()))
 		foo, err := c.loadtestsLister.Get(ownerRef.Name)
 		if err != nil {
-			c.logger.Info("ignoring orphaned object", zap.String("loadtest", object.GetSelfLink()),
+			c.logger.Debug("ignoring orphaned object", zap.String("loadtest", object.GetSelfLink()),
 				zap.String("object_owner", ownerRef.Name))
 			return
 		}
