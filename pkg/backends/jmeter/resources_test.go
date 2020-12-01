@@ -3,11 +3,12 @@ package jmeter
 import (
 	"testing"
 
-	"github.com/hellofresh/kangal/pkg/core/helper"
-	loadtestv1 "github.com/hellofresh/kangal/pkg/kubernetes/apis/loadtest/v1"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
-	v1 "k8s.io/api/core/v1"
+	coreV1 "k8s.io/api/core/v1"
+
+	"github.com/hellofresh/kangal/pkg/core/helper"
+	loadTestV1 "github.com/hellofresh/kangal/pkg/kubernetes/apis/loadtest/v1"
 )
 
 var logger = zap.NewNop()
@@ -19,7 +20,7 @@ func TestSplitTestData(t *testing.T) {
 	result, err := splitTestData(teststring, testnum, logger)
 	assert.NoError(t, err)
 	assert.Equal(t, testnum, len(result))
-	assert.Equal(t, "aaa ", string(result[0][0][0]))
+	assert.Equal(t, "aaa ", result[0][0][0])
 }
 
 func TestSplitTestDataEmptyString(t *testing.T) {
@@ -40,8 +41,8 @@ func TestSplitTestDataEmptyLines(t *testing.T) {
 
 	result, err := splitTestData(teststring, testnum, logger)
 	assert.NoError(t, err)
-	assert.Equal(t, "aaa ", string(result[0][0][0]))
-	assert.Equal(t, " ", string(result[1][0][0]))
+	assert.Equal(t, "aaa ", result[0][0][0])
+	assert.Equal(t, " ", result[1][0][0])
 }
 
 func TestSplitTestDataSymbols(t *testing.T) {
@@ -51,8 +52,8 @@ func TestSplitTestDataSymbols(t *testing.T) {
 	result, err := splitTestData(teststring, testnum, logger)
 
 	assert.NoError(t, err)
-	assert.Equal(t, "3+4", string(result[0][1][0]))
-	assert.Equal(t, "quatr%o", string(result[1][1][0]))
+	assert.Equal(t, "3+4", result[0][1][0])
+	assert.Equal(t, "quatr%o", result[1][1][0])
 }
 
 func TestSplitTestDataTrimComma(t *testing.T) {
@@ -62,7 +63,7 @@ func TestSplitTestDataTrimComma(t *testing.T) {
 	result, err := splitTestData(teststring, testnum, logger)
 	assert.NoError(t, err)
 	assert.Equal(t, 4, len(result[0][0]))
-	assert.Equal(t, " four", string(result[0][0][3]))
+	assert.Equal(t, " four", result[0][0][3])
 }
 
 func TestSplitTestDataInvalid(t *testing.T) {
@@ -93,20 +94,20 @@ func TestGetNamespaceFromInvalidName(t *testing.T) {
 }
 
 func TestPodResourceConfiguration(t *testing.T) {
-	lt := loadtestv1.LoadTest{
-		Spec: loadtestv1.LoadTestSpec{
-			MasterConfig: loadtestv1.ImageDetails{
+	lt := loadTestV1.LoadTest{
+		Spec: loadTestV1.LoadTestSpec{
+			MasterConfig: loadTestV1.ImageDetails{
 				Image: defaultMasterImageName,
 				Tag:   defaultMasterImageTag,
 			},
-			WorkerConfig: loadtestv1.ImageDetails{
+			WorkerConfig: loadTestV1.ImageDetails{
 				Image: defaultWorkerImageName,
 				Tag:   defaultWorkerImageTag,
 			},
 		},
 	}
 
-	c := &Backend{
+	c := &JMeter{
 		masterResources: helper.Resources{
 			CPULimits:      "100m",
 			CPURequests:    "200m",
@@ -127,7 +128,7 @@ func TestPodResourceConfiguration(t *testing.T) {
 	assert.Equal(t, c.masterResources.MemoryLimits, masterJob.Spec.Template.Spec.Containers[0].Resources.Limits.Memory().String())
 	assert.Equal(t, c.masterResources.MemoryRequests, masterJob.Spec.Template.Spec.Containers[0].Resources.Requests.Memory().String())
 
-	workerPod := c.NewPod(lt, 0, &v1.ConfigMap{}, map[string]string{"": ""})
+	workerPod := c.NewPod(lt, 0, &coreV1.ConfigMap{}, map[string]string{"": ""})
 	assert.Equal(t, c.workerResources.CPULimits, workerPod.Spec.Containers[0].Resources.Limits.Cpu().String())
 	assert.Equal(t, c.workerResources.CPURequests, workerPod.Spec.Containers[0].Resources.Requests.Cpu().String())
 	assert.Equal(t, c.workerResources.MemoryLimits, workerPod.Spec.Containers[0].Resources.Limits.Memory().String())

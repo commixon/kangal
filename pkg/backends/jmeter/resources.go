@@ -8,34 +8,35 @@ import (
 	"os"
 	"strings"
 
-	"github.com/hellofresh/kangal/pkg/core/helper"
-	loadTestV1 "github.com/hellofresh/kangal/pkg/kubernetes/apis/loadtest/v1"
 	"go.uber.org/zap"
 	batchV1 "k8s.io/api/batch/v1"
 	coreV1 "k8s.io/api/core/v1"
 	metaV1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+
+	"github.com/hellofresh/kangal/pkg/core/helper"
+	loadTestV1 "github.com/hellofresh/kangal/pkg/kubernetes/apis/loadtest/v1"
 )
 
 const (
-	// LoadTestLabel label used for JMeter resources
-	LoadTestLabel = "loadtest"
+	// loadTestLabel label used for JMeter resources
+	loadTestLabel = "loadtest"
 	// loadTestJobName is the name of the job that runs loadtests
-	loadTestJobName = LoadTestLabel + "-master"
+	loadTestJobName = loadTestLabel + "-master"
 	// loadTestWorkerPodLabelKey key we are using for the worker pod label
 	loadTestWorkerPodLabelKey = "app"
 	// loadTestWorkerPodLabelValue value we are using for the worker pod label
-	loadTestWorkerPodLabelValue = LoadTestLabel + "-worker-pod"
+	loadTestWorkerPodLabelValue = loadTestLabel + "-worker-pod"
 	// loadTestWorkerServiceName is the name of the service for talking to worker pods
-	loadTestWorkerServiceName = LoadTestLabel + "-workers"
+	loadTestWorkerServiceName = loadTestLabel + "-workers"
 	// loadTestWorkerName is the base name of the worker pods
-	loadTestWorkerName = LoadTestLabel + "-worker"
+	loadTestWorkerName = loadTestLabel + "-worker"
 	// loadTestFile is the name of the config map that is used to hold testfile data
-	loadTestFile = LoadTestLabel + "-testfile"
+	loadTestFile = loadTestLabel + "-testfile"
 	// loadTestMasterJobLabelKey key we are using for the master job label
 	loadTestMasterJobLabelKey = "app"
 	// loadTestEnvVars is a name of a config map containing environment variables
-	loadTestEnvVars = LoadTestLabel + "-env-vars"
+	loadTestEnvVars = loadTestLabel + "-env-vars"
 	// loadTestSecretLabel is a label of a secret containing environment variables
 	loadTestSecretLabel = "env-vars-from-file"
 	// loadTestSecretLabelKey is a label key of a secret containing environment variables
@@ -47,14 +48,14 @@ var (
 	loadTestWorkerPodLabels = map[string]string{
 		loadTestWorkerPodLabelKey: loadTestWorkerPodLabelValue,
 	}
-	//loadTestSecretLabels is a labeles set for created secrets
+	// loadTestSecretLabels is a label set for created secrets
 	loadTestSecretLabels = map[string]string{
 		loadTestSecretLabelKey: loadTestSecretLabel,
 	}
 )
 
 // NewJMeterSettingsConfigMap creates a new configmap which holds jmeter config
-func (b *Backend) NewJMeterSettingsConfigMap() *coreV1.ConfigMap {
+func (b *JMeter) NewJMeterSettingsConfigMap() *coreV1.ConfigMap {
 	data := map[string]string{
 		"jmeter.properties": `num_sample_threshold=5
 time_threshold=1000
@@ -82,7 +83,7 @@ jmeter.save.saveservice.timestamp_format = yyyy/MM/dd HH:mm:ss zzz`,
 
 	return &coreV1.ConfigMap{
 		ObjectMeta: metaV1.ObjectMeta{
-			Name: LoadTestLabel,
+			Name: loadTestLabel,
 			Labels: map[string]string{
 				"app": "hf-jmeter",
 			},
@@ -92,7 +93,7 @@ jmeter.save.saveservice.timestamp_format = yyyy/MM/dd HH:mm:ss zzz`,
 }
 
 // NewConfigMap creates a new configMap containing loadtest script
-func (b *Backend) NewConfigMap(loadTest loadTestV1.LoadTest) *coreV1.ConfigMap {
+func (b *JMeter) NewConfigMap(loadTest loadTestV1.LoadTest) *coreV1.ConfigMap {
 	testfile := loadTest.Spec.TestFile
 
 	data := map[string]string{
@@ -108,7 +109,7 @@ func (b *Backend) NewConfigMap(loadTest loadTestV1.LoadTest) *coreV1.ConfigMap {
 }
 
 // NewSecret creates a secret from file envVars
-func (b *Backend) NewSecret(loadTest loadTestV1.LoadTest) (*coreV1.Secret, error) {
+func (b *JMeter) NewSecret(loadTest loadTestV1.LoadTest) (*coreV1.Secret, error) {
 	envVars := loadTest.Spec.EnvVars
 
 	secretMap, err := helper.ReadEnvs(envVars)
@@ -127,7 +128,7 @@ func (b *Backend) NewSecret(loadTest loadTestV1.LoadTest) (*coreV1.Secret, error
 }
 
 // NewTestdataConfigMap creates a new configMap containing testdata
-func (b *Backend) NewTestdataConfigMap(loadTest loadTestV1.LoadTest) ([]*coreV1.ConfigMap, error) {
+func (b *JMeter) NewTestdataConfigMap(loadTest loadTestV1.LoadTest) ([]*coreV1.ConfigMap, error) {
 	testdata := loadTest.Spec.TestData
 	n := int(*loadTest.Spec.DistributedPods)
 
@@ -167,7 +168,7 @@ func (b *Backend) NewTestdataConfigMap(loadTest loadTestV1.LoadTest) ([]*coreV1.
 }
 
 // NewPod creates a new pod which mounts a configmap that contains jmeter testdata
-func (b *Backend) NewPod(loadTest loadTestV1.LoadTest, i int, configMap *coreV1.ConfigMap, podAnnotations map[string]string) *coreV1.Pod {
+func (b *JMeter) NewPod(loadTest loadTestV1.LoadTest, i int, configMap *coreV1.ConfigMap, podAnnotations map[string]string) *coreV1.Pod {
 	optionalVolume := true
 
 	imageRef := fmt.Sprintf("%s:%s", loadTest.Spec.WorkerConfig.Image, loadTest.Spec.WorkerConfig.Tag)
@@ -231,7 +232,7 @@ func (b *Backend) NewPod(loadTest loadTestV1.LoadTest, i int, configMap *coreV1.
 }
 
 // NewJMeterMasterJob creates a new job which runs the jmeter master pod
-func (b *Backend) NewJMeterMasterJob(loadTest loadTestV1.LoadTest, reportURL string, podAnnotations map[string]string) *batchV1.Job {
+func (b *JMeter) NewJMeterMasterJob(loadTest loadTestV1.LoadTest, reportURL string, podAnnotations map[string]string) *batchV1.Job {
 	var one int32 = 1
 
 	imageRef := fmt.Sprintf("%s:%s", loadTest.Spec.MasterConfig.Image, loadTest.Spec.MasterConfig.Tag)
@@ -317,7 +318,7 @@ func (b *Backend) NewJMeterMasterJob(loadTest loadTestV1.LoadTest, reportURL str
 							VolumeSource: coreV1.VolumeSource{
 								ConfigMap: &coreV1.ConfigMapVolumeSource{
 									LocalObjectReference: coreV1.LocalObjectReference{
-										Name: LoadTestLabel,
+										Name: loadTestLabel,
 									},
 								},
 							},
@@ -330,12 +331,12 @@ func (b *Backend) NewJMeterMasterJob(loadTest loadTestV1.LoadTest, reportURL str
 }
 
 // NewJMeterService creates a new services to talk to jmeter worker pods
-func (b *Backend) NewJMeterService() *coreV1.Service {
+func (b *JMeter) NewJMeterService() *coreV1.Service {
 	return &coreV1.Service{
 		ObjectMeta: metaV1.ObjectMeta{
 			Name: loadTestWorkerServiceName,
 			Labels: map[string]string{
-				"app": LoadTestLabel,
+				"app": loadTestLabel,
 			},
 		},
 		Spec: coreV1.ServiceSpec{
@@ -362,7 +363,7 @@ func (b *Backend) NewJMeterService() *coreV1.Service {
 }
 
 // CreatePodsWithTestdata creates workers Pods
-func (b *Backend) CreatePodsWithTestdata(ctx context.Context, configMaps []*coreV1.ConfigMap, loadTest *loadTestV1.LoadTest, namespace string) error {
+func (b *JMeter) CreatePodsWithTestdata(ctx context.Context, configMaps []*coreV1.ConfigMap, loadTest *loadTestV1.LoadTest, namespace string) error {
 	for i, cm := range configMaps {
 		configMap, err := b.kubeClientSet.CoreV1().ConfigMaps(namespace).Create(ctx, cm, metaV1.CreateOptions{})
 		if err != nil {

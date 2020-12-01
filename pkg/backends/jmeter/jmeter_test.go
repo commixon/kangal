@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/hellofresh/kangal/pkg/kubernetes/generated/clientset/versioned/fake"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -13,7 +12,8 @@ import (
 	"k8s.io/client-go/informers"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 
-	loadtestV1 "github.com/hellofresh/kangal/pkg/kubernetes/apis/loadtest/v1"
+	loadTestV1 "github.com/hellofresh/kangal/pkg/kubernetes/apis/loadtest/v1"
+	"github.com/hellofresh/kangal/pkg/kubernetes/generated/clientset/versioned/fake"
 )
 
 func TestCheckForTimeout(t *testing.T) {
@@ -24,38 +24,38 @@ func TestCheckForTimeout(t *testing.T) {
 
 	var tests = []struct {
 		Time           *metaV1.Time
-		LoadTestStatus loadtestV1.LoadTestStatus
+		LoadTestStatus loadTestV1.LoadTestStatus
 		Expected       bool
 	}{
 		{
 			// Less than MaxWaitTimeForPods
 			Time: &now,
-			LoadTestStatus: loadtestV1.LoadTestStatus{
-				Phase: loadtestV1.LoadTestCreating,
+			LoadTestStatus: loadTestV1.LoadTestStatus{
+				Phase: loadTestV1.LoadTestCreating,
 			},
 			Expected: false,
 		},
 		{
 			// pod was created MaxWaitTimeForPods and still in creation phase
 			Time: &past,
-			LoadTestStatus: loadtestV1.LoadTestStatus{
-				Phase: loadtestV1.LoadTestCreating,
+			LoadTestStatus: loadTestV1.LoadTestStatus{
+				Phase: loadTestV1.LoadTestCreating,
 			},
 			Expected: true,
 		},
 		{
 			// Pod has been up for more than MaxWaitTimeForPods, but the test is running
 			Time: &past,
-			LoadTestStatus: loadtestV1.LoadTestStatus{
-				Phase: loadtestV1.LoadTestRunning,
+			LoadTestStatus: loadTestV1.LoadTestStatus{
+				Phase: loadTestV1.LoadTestRunning,
 			},
 			Expected: false,
 		},
 		{
 			// Pod has been up for more than MaxWaitTimeForPods, but the test is running
 			Time: nil,
-			LoadTestStatus: loadtestV1.LoadTestStatus{
-				Phase: loadtestV1.LoadTestCreating,
+			LoadTestStatus: loadTestV1.LoadTestStatus{
+				Phase: loadTestV1.LoadTestCreating,
 			},
 			Expected: false,
 		},
@@ -69,37 +69,37 @@ func TestCheckForTimeout(t *testing.T) {
 
 func TestGetLoadTestPhaseFromJob(t *testing.T) {
 	var testPhases = []struct {
-		ExpectedPhase loadtestV1.LoadTestPhase
+		ExpectedPhase loadTestV1.LoadTestPhase
 		JobStatus     batchV1.JobStatus
 	}{
 		{
-			loadtestV1.LoadTestStarting,
+			loadTestV1.LoadTestStarting,
 			batchV1.JobStatus{
 				Active: 0,
 			},
 		},
 		{
-			loadtestV1.LoadTestRunning,
+			loadTestV1.LoadTestRunning,
 			batchV1.JobStatus{
 				Active: 1,
 			},
 		},
 		{
-			loadtestV1.LoadTestRunning,
+			loadTestV1.LoadTestRunning,
 			batchV1.JobStatus{
 				Active: 1,
 				Failed: 1,
 			},
 		},
 		{
-			loadtestV1.LoadTestFinished,
+			loadTestV1.LoadTestFinished,
 			batchV1.JobStatus{
 				Active: 0,
 				Failed: 2,
 			},
 		},
 		{
-			loadtestV1.LoadTestFinished,
+			loadTestV1.LoadTestFinished,
 			batchV1.JobStatus{
 				Active:    0,
 				Succeeded: 1,
@@ -114,57 +114,149 @@ func TestGetLoadTestPhaseFromJob(t *testing.T) {
 	}
 }
 
-func TestJMeter_CheckOrCreateResources(t *testing.T) {
+func TestSync(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// Arbitrary test values
 	distributedPodsNum := int32(2)
 	namespace := "loadtest-namespace"
+	reportURL := "http://kangal-proxy.local/load-test/loadtest-name/report"
 
 	// Fake clients
+	logger, _ := zap.NewDevelopment()
 	kubeClient := k8sfake.NewSimpleClientset()
 	client := fake.NewSimpleClientset()
-	informers := informers.NewSharedInformerFactory(kubeClient, 0)
-	namespaceLister := informers.Core().V1().Namespaces().Lister()
-	logger, _ := zap.NewDevelopment()
+	namespaceLister := informers.NewSharedInformerFactory(kubeClient, 0).Core().V1().Namespaces().Lister()
 
-	c := New(
-		kubeClient,
-		client,
-		&loadtestV1.LoadTest{
-			ObjectMeta: metaV1.ObjectMeta{
-				Name: "loadtest-name",
+	loadTest := loadTestV1.LoadTest{
+		ObjectMeta: metaV1.ObjectMeta{
+			Name: "loadtest-name",
+		},
+		Spec: loadTestV1.LoadTestSpec{
+			DistributedPods: &distributedPodsNum,
+			MasterConfig: loadTestV1.ImageDetails{
+				Image: defaultMasterImageName,
+				Tag:   defaultMasterImageTag,
 			},
-			Spec: loadtestV1.LoadTestSpec{
-				DistributedPods: &distributedPodsNum,
-				MasterConfig: loadtestV1.ImageDetails{
-					Image: defaultMasterImageName,
-					Tag:   defaultMasterImageTag,
-				},
-				WorkerConfig: loadtestV1.ImageDetails{
-					Image: defaultWorkerImageName,
-					Tag:   defaultWorkerImageTag,
-				},
-			},
-			Status: loadtestV1.LoadTestStatus{
-				Phase:     "",
-				Namespace: namespace,
-				JobStatus: batchV1.JobStatus{},
-				Pods:      loadtestV1.LoadTestPodsStatus{},
+			WorkerConfig: loadTestV1.ImageDetails{
+				Image: defaultWorkerImageName,
+				Tag:   defaultWorkerImageTag,
 			},
 		},
-		logger,
-		namespaceLister,
-		"http://kangal-proxy.local/load-test/loadtest-name/report",
-		map[string]string{"": ""},
-		map[string]string{"": ""},
-		Config{},
-	)
+		Status: loadTestV1.LoadTestStatus{
+			Phase:     "",
+			Namespace: namespace,
+			JobStatus: batchV1.JobStatus{},
+			Pods:      loadTestV1.LoadTestPodsStatus{},
+		},
+	}
 
-	c.CheckOrCreateResources(ctx)
+	b := JMeter{
+		kubeClientSet:   kubeClient,
+		kangalClientSet: client,
+		logger:          logger,
+		namespaceLister: namespaceLister,
+	}
+
+	err := b.Sync(ctx, loadTest, reportURL)
+	require.NoError(t, err, "Error when syncing")
 
 	services, err := kubeClient.CoreV1().Services(namespace).List(ctx, metaV1.ListOptions{})
 	require.NoError(t, err, "Error when listing services")
 	assert.NotZero(t, len(services.Items), "Expected non-zero service amount after CheckOrCreateResources but found zero services")
+}
+
+func TestTransformLoadTestSpec(t *testing.T) {
+	var distributedPods int32 = 3
+
+	type args struct {
+		config          Config
+		overwrite       bool
+		distributedPods int32
+		tags            loadTestV1.LoadTestTags
+		testFileStr     string
+		testDataStr     string
+		envVarsStr      string
+	}
+	tests := []struct {
+		name    string
+		args    args
+		want    loadTestV1.LoadTestSpec
+		wantErr bool
+	}{
+		{
+			name: "Spec is valid",
+			args: args{
+				overwrite:       true,
+				distributedPods: 3,
+				tags:            loadTestV1.LoadTestTags{"team": "kangal"},
+				testFileStr:     "something in the file",
+				testDataStr:     "some test data",
+			},
+			want: loadTestV1.LoadTestSpec{
+				Overwrite:       true,
+				MasterConfig:    loadTestV1.ImageDetails{Image: defaultMasterImageName, Tag: defaultMasterImageTag},
+				WorkerConfig:    loadTestV1.ImageDetails{Image: defaultWorkerImageName, Tag: defaultWorkerImageTag},
+				DistributedPods: &distributedPods,
+				Tags:            loadTestV1.LoadTestTags{"team": "kangal"},
+				TestFile:        "something in the file",
+				TestData:        "some test data",
+			},
+			wantErr: false,
+		},
+		{
+			name:    "Spec invalid - invalid distributed pods",
+			args:    args{},
+			want:    loadTestV1.LoadTestSpec{},
+			wantErr: true,
+		},
+		{
+			name: "Spec invalid - require test file",
+			args: args{
+				overwrite:       true,
+				distributedPods: 3,
+			},
+			want: loadTestV1.LoadTestSpec{
+				Overwrite:       true,
+				DistributedPods: &distributedPods,
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lt := &loadTestV1.LoadTestSpec{
+				Overwrite:       tt.args.overwrite,
+				DistributedPods: &tt.args.distributedPods,
+				Tags:            tt.args.tags,
+				TestFile:        tt.args.testFileStr,
+				TestData:        tt.args.testDataStr,
+				EnvVars:         tt.args.envVarsStr,
+			}
+
+			b := &JMeter{
+				config: &Config{},
+			}
+			b.SetDefaults()
+
+			err := b.TransformLoadTestSpec(lt)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+
+			assert.Equal(t, tt.want.Overwrite, lt.Overwrite)
+			assert.Equal(t, tt.want.MasterConfig, lt.MasterConfig)
+			assert.Equal(t, tt.want.WorkerConfig, lt.WorkerConfig)
+			if nil != tt.want.DistributedPods {
+				assert.Equal(t, *tt.want.DistributedPods, *lt.DistributedPods)
+			}
+			assert.Equal(t, tt.want.Tags, lt.Tags)
+			assert.Equal(t, tt.want.TestFile, lt.TestFile)
+			assert.Equal(t, tt.want.TestData, lt.TestData)
+		})
+	}
 }
